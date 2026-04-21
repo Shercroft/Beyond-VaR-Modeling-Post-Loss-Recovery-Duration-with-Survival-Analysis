@@ -1,0 +1,12 @@
+yfinance
+pandas
+numpy
+scipy
+matplotlib
+statsmodels
+streamlit
+plotly
+jupyter
+nbformat
+nbconvert
+ipykernel
