@@ -25,6 +25,8 @@ PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 RANDOM_SEED = 42
 ROLLING_WINDOW = 250
 N_SIMS = 10_000
+TRADING_DAYS_PER_YEAR = 252
+TEST_SIGNIFICANCE = 0.05
 
 METHOD_OPTION_ALL = "All three"
 METHOD_OPTIONS = [*VAR_METHODS, METHOD_OPTION_ALL]
@@ -45,14 +47,19 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .block-container { padding-top: 1.4rem; padding-bottom: 2.5rem; }
+    .stApp { background: #f8fafc; }
+    .block-container {
+        padding-top: 1.4rem;
+        padding-bottom: 2.5rem;
+        max-width: 1360px;
+    }
     .metric-card {
-        border: 1px solid #e5e7eb;
+        border: 1px solid #dbe3ea;
         border-radius: 8px;
         padding: 16px 18px;
         background: #ffffff;
         min-height: 116px;
-        box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.05);
     }
     .metric-label {
         color: #64748b;
@@ -77,7 +84,41 @@ st.markdown(
     .status-pass { border-left: 6px solid #16a34a; }
     .status-fail { border-left: 6px solid #dc2626; }
     .status-neutral { border-left: 6px solid #94a3b8; }
-    h1, h2, h3 { letter-spacing: 0; }
+    .research-panel {
+        border: 1px solid #dbe3ea;
+        border-radius: 8px;
+        padding: 18px 20px;
+        background: #ffffff;
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.045);
+        min-height: 160px;
+    }
+    .research-panel h4 {
+        margin: 0 0 8px 0;
+        color: #0f172a;
+        font-size: 0.96rem;
+    }
+    .research-panel p {
+        color: #475569;
+        font-size: 0.88rem;
+        line-height: 1.55;
+        margin: 0;
+    }
+    .analysis-callout {
+        border-left: 5px solid #005f73;
+        border-radius: 8px;
+        padding: 14px 16px;
+        background: #ffffff;
+        color: #334155;
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.045);
+    }
+    .analysis-callout strong { color: #0f172a; }
+    .small-note {
+        color: #64748b;
+        font-size: 0.86rem;
+        line-height: 1.55;
+    }
+    h1, h2, h3 { letter-spacing: 0; color: #0f172a; }
+    div[data-testid="stSidebar"] { background: #eef3f7; }
     </style>
     """,
     unsafe_allow_html=True,
@@ -97,6 +138,16 @@ def load_source_data() -> tuple[pd.DataFrame, pd.Series]:
     vix = pd.read_csv(vix_path, parse_dates=["Date"]).set_index("Date").sort_index()
     vix_column = "^VIX" if "^VIX" in vix.columns else vix.columns[0]
     return returns[TICKERS], pd.to_numeric(vix[vix_column], errors="coerce").rename("VIX")
+
+
+@st.cache_data(show_spinner=False)
+def load_diagnostics() -> tuple[pd.DataFrame, pd.DataFrame]:
+    summary_path = PROCESSED_DIR / "return_summary_statistics.csv"
+    normality_path = PROCESSED_DIR / "normality_tests.csv"
+
+    summary = pd.read_csv(summary_path).set_index("ticker")
+    normality = pd.read_csv(normality_path).set_index("ticker")
+    return summary, normality
 
 
 @st.cache_data(show_spinner="Calculating rolling VaR...")
@@ -149,6 +200,78 @@ def render_metric_card(label: str, value: str, note: str = "", status: str = "ne
         """,
         unsafe_allow_html=True,
     )
+
+
+def render_methodology(confidence_pct: int) -> None:
+    alpha = 1 - confidence_pct / 100
+    st.markdown(
+        f"""
+        <div class="analysis-callout">
+            <strong>Research design.</strong>
+            The dashboard treats VaR as a one-day-ahead lower-tail forecast. Each estimate for day t
+            uses information through t-1 only, with a {ROLLING_WINDOW}-trading-day rolling window.
+            The exceedance probability is alpha = {alpha:.0%}; under correct unconditional coverage,
+            the empirical violation rate should converge to {alpha:.0%}.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    formula_cols = st.columns(3)
+    with formula_cols[0]:
+        st.markdown(
+            """
+            <div class="research-panel">
+                <h4>Returns and Historical Simulation</h4>
+                <p>Returns are adjusted-close percentage returns. Historical VaR is the empirical alpha-quantile of the prior rolling window.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.latex(r"r_t = \frac{P_t}{P_{t-1}} - 1")
+        st.latex(r"\widehat{VaR}^{HS}_{t,\alpha}=Q_{\alpha}\left(r_{t-250},\ldots,r_{t-1}\right)")
+    with formula_cols[1]:
+        st.markdown(
+            """
+            <div class="research-panel">
+                <h4>Parametric Normal VaR</h4>
+                <p>The Gaussian model plugs the rolling sample mean and standard deviation into the normal lower-tail quantile.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.latex(r"\widehat{VaR}^{N}_{t,\alpha}=\hat{\mu}_{t-1,250}+\hat{\sigma}_{t-1,250}\Phi^{-1}(\alpha)")
+        st.latex(r"\hat{\mu}_{t-1,250}=\frac{1}{250}\sum_{i=1}^{250} r_{t-i}")
+    with formula_cols[2]:
+        st.markdown(
+            """
+            <div class="research-panel">
+                <h4>Monte Carlo VaR and Violations</h4>
+                <p>Monte Carlo VaR samples 10,000 normal shocks per forecast date and records the simulated alpha-quantile.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.latex(r"r^{(j)}_{t}\sim\mathcal{N}\left(\hat{\mu}_{t-1,250},\hat{\sigma}_{t-1,250}^{2}\right)")
+        st.latex(r"I_t=\mathbf{1}\left(r_t<\widehat{VaR}_{t,\alpha}\right)")
+
+    with st.expander("Backtesting test statistics", expanded=False):
+        st.latex(
+            r"LR_{uc}=-2\log\left(\frac{(1-\alpha)^{n-x}\alpha^x}{(1-\hat{p})^{n-x}\hat{p}^x}\right)\sim\chi^2_1,\quad \hat{p}=\frac{x}{n}"
+        )
+        st.latex(
+            r"LR_{cc}=LR_{uc}+LR_{ind}\sim\chi^2_2,\quad LR_{ind}=-2\log\left(\frac{(1-\pi)^{n_{00}+n_{10}}\pi^{n_{01}+n_{11}}}{(1-\pi_0)^{n_{00}}\pi_0^{n_{01}}(1-\pi_1)^{n_{10}}\pi_1^{n_{11}}}\right)"
+        )
+        st.markdown(
+            """
+            <p class="small-note">
+            Kupiec's test evaluates unconditional coverage. Christoffersen's conditional coverage test
+            adds an independence component, so clustered violations can fail even when the average
+            violation rate is close to the theoretical tail probability.
+            </p>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def build_summary_values(backtests: pd.DataFrame, method_option: str, confidence_pct: int) -> dict:
@@ -328,8 +451,121 @@ def style_backtest_table(table: pd.DataFrame):
     return table.style.map(color_status)
 
 
+def make_distribution_table(
+    ticker: str,
+    summary_stats: pd.DataFrame,
+    normality_tests: pd.DataFrame,
+) -> pd.DataFrame:
+    summary_row = summary_stats.loc[ticker]
+    normality_row = normality_tests.loc[ticker]
+
+    rows = {
+        "Daily mean": format_pct(summary_row["mean"]),
+        "Annualized mean": format_pct(summary_row["mean"] * TRADING_DAYS_PER_YEAR),
+        "Daily volatility": format_pct(summary_row["std"]),
+        "Annualized volatility": format_pct(summary_row["std"] * np.sqrt(TRADING_DAYS_PER_YEAR)),
+        "Skewness": format_float(summary_row["skew"]),
+        "Excess kurtosis": format_float(summary_row["excess_kurtosis"]),
+        "Jarque-Bera p-value": format_float(normality_row["jarque_bera_p_value"]),
+        "D'Agostino K2 p-value": format_float(normality_row["dagostino_k2_p_value"]),
+        "Normality at 5%": "Rejected"
+        if bool(normality_row["reject_normality_5pct_jb"] or normality_row["reject_normality_5pct_k2"])
+        else "Not rejected",
+    }
+    return pd.DataFrame({"Statistic": rows.keys(), "Value": rows.values()})
+
+
+def make_method_diagnostics(
+    df: pd.DataFrame,
+    backtests: pd.DataFrame,
+    methods: list[str],
+) -> pd.DataFrame:
+    rows = []
+    indexed_backtests = backtests.set_index("method")
+
+    for method in methods:
+        column = METHOD_TO_COLUMN[method]
+        valid = df["return"].notna() & df[column].notna()
+        flags = df.loc[valid, "return"].lt(df.loc[valid, column])
+        severity = (df.loc[valid, column] - df.loc[valid, "return"]).where(flags)
+        vix_valid = df.loc[valid, "VIX"]
+        transition_denominator = indexed_backtests.at[method, "transition_10"] + indexed_backtests.at[method, "transition_11"]
+        hit_after_hit = (
+            indexed_backtests.at[method, "transition_11"] / transition_denominator
+            if transition_denominator
+            else np.nan
+        )
+
+        rows.append(
+            {
+                "Method": method,
+                "Violations": int(flags.sum()),
+                "Violation rate": format_pct(flags.mean()),
+                "Mean severity": format_pct(severity.mean()),
+                "Max severity": format_pct(severity.max()),
+                "Mean VIX on violation": format_float(vix_valid.loc[flags].mean()),
+                "Mean VIX otherwise": format_float(vix_valid.loc[~flags].mean()),
+                "Hit-after-hit probability": format_pct(hit_after_hit),
+            }
+        )
+
+    return pd.DataFrame(rows)
+
+
+def render_empirical_interpretation(
+    ticker: str,
+    methods: list[str],
+    backtests: pd.DataFrame,
+    summary_stats: pd.DataFrame,
+    normality_tests: pd.DataFrame,
+    confidence_pct: int,
+) -> None:
+    summary_row = summary_stats.loc[ticker]
+    normality_row = normality_tests.loc[ticker]
+    indexed = backtests.set_index("method").loc[methods]
+
+    kurtosis = float(summary_row["excess_kurtosis"])
+    skew = float(summary_row["skew"])
+    avg_rate = float(indexed["violation_rate"].mean())
+    expected_rate = 1 - confidence_pct / 100
+    kupiec_passes = int(indexed["kupiec_pass"].sum())
+    christoffersen_passes = int(indexed["christoffersen_pass"].sum())
+
+    skew_text = "left-skewed downside tail" if skew < -0.05 else "near-symmetric return distribution"
+    kurtosis_text = "strong fat-tail behavior" if kurtosis > 3 else "moderate tail thickness"
+    normality_text = (
+        "normality is rejected at the 5% level, supporting non-Gaussian tail diagnostics"
+        if bool(normality_row["reject_normality_5pct_jb"] or normality_row["reject_normality_5pct_k2"])
+        else "normality is not rejected at the 5% level in these diagnostics"
+    )
+    coverage_text = (
+        "close to"
+        if abs(avg_rate - expected_rate) <= 0.005
+        else "above"
+        if avg_rate > expected_rate
+        else "below"
+    )
+
+    st.markdown(
+        f"""
+        <div class="analysis-callout">
+            <strong>{ticker} empirical reading.</strong>
+            The selected sample shows {skew_text} and {kurtosis_text}
+            (skewness {skew:.3f}, excess kurtosis {kurtosis:.3f}); {normality_text}.
+            Across the selected method set, the average violation rate is {avg_rate:.2%},
+            {coverage_text} the theoretical {expected_rate:.2%} level. Kupiec coverage passes
+            for {kupiec_passes}/{len(methods)} method(s), while Christoffersen conditional coverage
+            passes for {christoffersen_passes}/{len(methods)} method(s), highlighting whether
+            exceptions arrive independently or in volatility clusters.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 try:
     returns_data, _vix_series = load_source_data()
+    summary_stats, normality_tests = load_diagnostics()
 except FileNotFoundError as exc:
     st.error(str(exc))
     st.stop()
@@ -374,7 +610,10 @@ st.caption(
     f"{N_SIMS:,} Monte Carlo paths | {start_date} to {end_date}"
 )
 
-st.subheader("1. Summary")
+st.subheader("1. Methodology and Formulae")
+render_methodology(confidence_pct)
+
+st.subheader("2. Summary")
 metric_cols = st.columns(5)
 with metric_cols[0]:
     render_metric_card("Total trading days", summary["trading_days"], summary["note"])
@@ -387,16 +626,33 @@ with metric_cols[3]:
 with metric_cols[4]:
     render_metric_card("Kupiec Test", summary["kupiec"], "5% test threshold", summary["kupiec_status"])
 
-st.subheader("2. Main VaR Chart")
+st.subheader("3. Main VaR Chart")
 st.plotly_chart(make_var_chart(filtered, ticker, methods_for_chart, confidence_pct), width="stretch")
 
-st.subheader("3. Violation Analysis")
+st.subheader("4. Violation Analysis")
 violation_counts = violation_counts_by_year(filtered)
 st.plotly_chart(make_violation_bar(violation_counts), width="stretch")
 
-st.subheader("4. Backtesting Results")
+st.subheader("5. Backtesting Results")
 backtest_table = make_backtest_table(backtests)
 st.dataframe(style_backtest_table(backtest_table), width="stretch")
+
+st.subheader("6. Empirical Diagnostics and Interpretation")
+render_empirical_interpretation(
+    ticker,
+    methods_for_chart,
+    backtests,
+    summary_stats,
+    normality_tests,
+    confidence_pct,
+)
+diagnostic_cols = st.columns([0.82, 1.18])
+with diagnostic_cols[0]:
+    st.markdown("**Return distribution diagnostics**")
+    st.dataframe(make_distribution_table(ticker, summary_stats, normality_tests), width="stretch", hide_index=True)
+with diagnostic_cols[1]:
+    st.markdown("**Violation severity and VIX context**")
+    st.dataframe(make_method_diagnostics(filtered, backtests, methods_for_chart), width="stretch", hide_index=True)
 
 st.subheader("Survival Analysis Export")
 events = build_violation_events(ticker, filtered, filtered["VIX"], methods=methods_for_chart)
