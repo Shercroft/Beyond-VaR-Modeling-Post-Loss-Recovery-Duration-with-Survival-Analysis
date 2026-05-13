@@ -1,28 +1,27 @@
 # Beyond-VaR-Modeling-Post-Loss-Recovery-Duration-with-Survival-Analysis
 
-A risk analytics project that combines Value at Risk (VaR) and Survival Analysis to study both how much an asset can lose and how long it takes to recover after an abnormal loss event.
+This project builds a risk-analysis framework for studying ETF downside losses and post-loss recovery behavior. Instead of only estimating how large a loss may be through Value at Risk (VaR), the project also investigates how long an ETF takes to recover after an abnormal downside event.
 
-The current implementation includes a complete VaR analysis pipeline for SPY, QQQ, GLD, and VOO, plus a Streamlit dashboard that exports violation-event data for the Survival Analysis teammate.
+The current pipeline focuses on SPY, QQQ, GLD, and VOO. It computes daily returns, estimates rolling one-day VaR using Historical VaR, Parametric Normal VaR, and Monte Carlo VaR, identifies VaR violation events, and prepares event-level data for survival analysis. VIX is included as a market-stress covariate to help explain whether recovery duration changes under stressed market conditions.
 
 ## Research Objective
 
-This project studies two linked risk questions:
+This project studies two connected questions:
 
-1. How large are one-day lower-tail losses under different Value at Risk specifications?
-2. After an abnormal loss event occurs, how long does the asset take to recover?
+1. How large are lower-tail ETF losses under different VaR methods?
+2. After a VaR violation occurs, how long does the ETF take to recover?
 
-The VaR layer identifies statistically meaningful loss events. The survival-analysis layer then treats those events as duration observations, with VIX included as a market-stress covariate.
+The VaR layer identifies abnormal loss events. The survival-analysis layer treats those events as duration observations and analyzes post-loss recovery patterns.
 
 ## Scope
 
 - Assets: SPY, QQQ, GLD, VOO
-- Covariate: VIX (`^VIX`) stored separately
+- Market-stress covariate: VIX
 - Data source: `yfinance`
-- Sample: 2015-01-01 through 2025-12-31
 - Return frequency: daily adjusted-close percentage returns
-- VaR confidence: 95%
+- VaR confidence level: 95%
 - Rolling estimation window: 250 trading days
-- Monte Carlo simulations: 10,000 per forecast date, random seed 42
+- Monte Carlo simulations: 10,000 per forecast date
 
 ## Methodology and Formulae
 
