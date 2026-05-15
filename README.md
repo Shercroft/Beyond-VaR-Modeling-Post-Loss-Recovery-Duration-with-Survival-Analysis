@@ -136,6 +136,23 @@ The repo is ready for Streamlit Community Cloud:
 
 Streamlit Cloud will install `requirements.txt` and serve the dashboard from the processed CSV files committed in `data/processed`.
 
+## Power BI Risk Status Dashboard
+
+This repository also includes a Power BI Service executive dashboard built from the 95% confidence, 250-day rolling-window baseline dataset. The report is designed as a single-table quick-create dashboard for monitoring ETF VaR breaches and post-loss recovery signals.
+
+![Power BI Risk Status Dashboard](powerbi/beyond_var_risk_status_dashboard_page1.png)
+
+Power BI artifacts:
+
+- `powerbi/beyond_var_risk_status_dashboard_page1.pdf` - exported Power BI report page.
+- `powerbi/beyond_var_risk_status_dashboard_page1.png` - dashboard preview image.
+- `data/powerbi/vw_powerbi_quickcreate_baseline_95_250_clean.csv` - cleaned single-table dataset for Power BI import.
+- `powerbi/README.md` - field mapping and manual rebuild notes for the Power BI page.
+
+Page 1 is an executive risk summary with slicers for `Ticker`, `MethodName`, and `Year`. It includes KPI cards for total VaR breaches, average VaR percentage, average breach severity, and average daily return. The main visuals show breach counts by ticker, method-level VaR breach analysis, quarterly breach timing, daily return versus VaR forecast behavior, a breach-flow decomposition from ticker to method to year, and breach share by method.
+
+The Power BI version uses a dark gray canvas, light rounded panels, navy primary bars and lines, and green/teal/purple secondary categories to keep the report consistent with a financial risk-monitoring style.
+
 ## Modeling Note
 
 VaR forecasts for day `t` are estimated with the prior 250 trading-day window and shifted forward one day before comparing against the realized return. This avoids look-ahead bias in the violation checks.
